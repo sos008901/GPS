@@ -1,1 +1,774 @@
+<!DOCTYPE html>
+<html lang="zh-TW" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <title>GPX 軌跡產生器 | 座標一鍵轉 GPX</title>
+  
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            brand: {
+              50: '#eef2ff',
+              100: '#e0e7ff',
+              500: '#6366f1',
+              600: '#4f46e5',
+              700: '#4338ca',
+            },
+            dark: {
+              bg: '#090d16',
+              card: '#121826',
+              input: '#1a2234',
+              border: '#2a344a',
+              hover: '#222c42'
+            }
+          }
+        }
+      }
+    }
+  </script>
 
+  <!-- Leaflet CSS & JS -->
+  <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin="" />
+  <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+  
+  <!-- Lucide Icons -->
+  <script src="https://unpkg.com/lucide@latest"></script>
+
+  <style>
+    /* Prevent rubber-banding on iOS while keeping standard scroll */
+    html, body {
+      overscroll-behavior-y: none;
+      -webkit-tap-highlight-color: transparent;
+      font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, "Noto Sans TC", sans-serif;
+    }
+    
+    /* Custom Scrollbar for Textarea & Cards */
+    ::-webkit-scrollbar {
+      width: 6px;
+      height: 6px;
+    }
+    ::-webkit-scrollbar-track {
+      background: transparent;
+    }
+    ::-webkit-scrollbar-thumb {
+      background: #2a344a;
+      border-radius: 9999px;
+    }
+    ::-webkit-scrollbar-thumb:hover {
+      background: #3b4866;
+    }
+
+    /* Leaflet Custom Marker & Dark Mode Filter */
+    .leaflet-container {
+      background: #0f172a !important;
+      font-family: inherit;
+    }
+    .dark-map-tiles {
+      filter: brightness(0.85) invert(1) contrast(3) hue-rotate(200deg) saturate(0.3) brightness(0.7);
+    }
+    
+    /* Touch Feedback Animation */
+    .active-scale:active {
+      transform: scale(0.97);
+    }
+  </style>
+</head>
+
+<body class="bg-dark-bg text-slate-100 min-h-screen flex flex-col antialiased selection:bg-brand-500 selection:text-white">
+
+  <!-- Header -->
+  <header class="sticky top-0 z-40 bg-dark-card/90 backdrop-blur-md border-b border-dark-border px-4 py-3 sm:px-6">
+    <div class="max-w-7xl mx-auto flex items-center justify-between">
+      <div class="flex items-center gap-3">
+        <div class="w-9 h-9 rounded-xl bg-gradient-to-tr from-brand-600 to-indigo-400 flex items-center justify-center shadow-lg shadow-brand-500/20">
+          <i data-lucide="map-pin" class="w-5 h-5 text-white"></i>
+        </div>
+        <div>
+          <h1 class="font-bold text-base sm:text-lg tracking-tight text-white flex items-center gap-2">
+            GPX 軌跡產生器
+            <span class="text-[10px] font-semibold tracking-wider bg-brand-500/20 text-brand-400 border border-brand-500/30 px-2 py-0.5 rounded-full">Pro</span>
+          </h1>
+          <p class="text-xs text-slate-400 hidden sm:block">貼上座標即時預覽、支援手機直接分享至 Garmin / 登山 App</p>
+        </div>
+      </div>
+
+      <!-- Quick Action Buttons -->
+      <div class="flex items-center gap-2">
+        <button id="btnLoadSample" class="text-xs font-medium bg-dark-input hover:bg-dark-hover border border-dark-border px-3 py-2 rounded-lg transition text-slate-300 flex items-center gap-1.5 active-scale">
+          <i data-lucide="sparkles" class="w-3.5 h-3.5 text-amber-400"></i>
+          <span class="hidden xs:inline">載入</span>範例
+        </button>
+        <button id="btnClear" class="text-xs font-medium bg-dark-input hover:bg-red-500/10 hover:border-red-500/30 hover:text-red-400 border border-dark-border px-3 py-2 rounded-lg transition text-slate-400 flex items-center gap-1.5 active-scale">
+          <i data-lucide="trash-2" class="w-3.5 h-3.5"></i>
+          <span>清空</span>
+        </button>
+      </div>
+    </div>
+  </header>
+
+  <!-- Main Grid Content -->
+  <main class="flex-1 max-w-7xl w-full mx-auto p-3 sm:p-6 grid grid-cols-1 lg:grid-cols-12 gap-4 sm:gap-6">
+    
+    <!-- Left Column: Input, Stats & Config (5 cols on large screens) -->
+    <div class="lg:col-span-5 flex flex-col gap-4">
+      
+      <!-- Coordinate Input Card -->
+      <div class="bg-dark-card border border-dark-border rounded-2xl p-4 sm:p-5 shadow-xl flex flex-col">
+        <div class="flex items-center justify-between mb-2.5">
+          <label for="coordInput" class="text-sm font-semibold text-slate-200 flex items-center gap-2">
+            <i data-lucide="list-ordered" class="w-4 h-4 text-brand-400"></i>
+            座標輸入清單
+          </label>
+          <div class="flex items-center gap-2">
+            <!-- Swap Lat/Lon -->
+            <button id="btnSwapCoords" title="經緯度對調 (緯度,經度 ↔ 經度,緯度)" class="text-xs bg-dark-input hover:bg-dark-hover border border-dark-border px-2.5 py-1.5 rounded-md text-slate-300 flex items-center gap-1 transition active-scale">
+              <i data-lucide="arrow-left-right" class="w-3.5 h-3.5 text-indigo-400"></i>
+              <span>經緯對調</span>
+            </button>
+            <!-- Paste button -->
+            <button id="btnPaste" class="text-xs bg-brand-600 hover:bg-brand-500 text-white font-medium px-2.5 py-1.5 rounded-md flex items-center gap-1 transition active-scale shadow-sm">
+              <i data-lucide="clipboard" class="w-3.5 h-3.5"></i>
+              <span>一鍵貼上</span>
+            </button>
+          </div>
+        </div>
+
+        <div class="relative">
+          <textarea id="coordInput" rows="7" 
+            placeholder="支援多種格式，每行一組：&#10;47.997699, 0.198029&#10;47.997589, 0.199023&#10;47.997305, 0.200037, 52 (含海拔)&#10;或直接貼上 Google Maps 經緯度"
+            class="w-full bg-dark-input border border-dark-border rounded-xl p-3 text-xs sm:text-sm font-mono text-slate-200 focus:outline-none focus:ring-2 focus:ring-brand-500/50 focus:border-brand-500 transition resize-y min-h-[140px]"></textarea>
+        </div>
+
+        <!-- Format Helper Tags -->
+        <div class="flex flex-wrap items-center gap-1.5 mt-2.5 text-[11px] text-slate-400">
+          <span class="text-slate-500">支援：</span>
+          <span class="bg-dark-input px-2 py-0.5 rounded border border-dark-border">緯度, 經度</span>
+          <span class="bg-dark-input px-2 py-0.5 rounded border border-dark-border">空格分隔</span>
+          <span class="bg-dark-input px-2 py-0.5 rounded border border-dark-border">含海拔 (m)</span>
+        </div>
+      </div>
+
+      <!-- Real-time Stats Card -->
+      <div class="bg-dark-card border border-dark-border rounded-2xl p-4 shadow-xl">
+        <h3 class="text-xs font-semibold text-slate-400 uppercase tracking-wider mb-3 flex items-center gap-1.5">
+          <i data-lucide="activity" class="w-3.5 h-3.5 text-emerald-400"></i>
+          路線數據統計
+        </h3>
+        <div class="grid grid-cols-3 gap-2 sm:gap-3 text-center">
+          <div class="bg-dark-input p-2.5 rounded-xl border border-dark-border">
+            <span class="text-[11px] text-slate-400 block mb-0.5">點位數量</span>
+            <span id="statPoints" class="text-base sm:text-lg font-bold text-white font-mono">0</span>
+          </div>
+          <div class="bg-dark-input p-2.5 rounded-xl border border-dark-border">
+            <span class="text-[11px] text-slate-400 block mb-0.5">總里程</span>
+            <span id="statDistance" class="text-base sm:text-lg font-bold text-brand-400 font-mono">0.00 km</span>
+          </div>
+          <div class="bg-dark-input p-2.5 rounded-xl border border-dark-border">
+            <span class="text-[11px] text-slate-400 block mb-0.5">預估耗時</span>
+            <span id="statTime" class="text-base sm:text-lg font-bold text-emerald-400 font-mono">--:--</span>
+          </div>
+        </div>
+
+        <div id="statPointsInfo" class="mt-3 text-xs text-slate-400 bg-dark-bg/60 p-2 rounded-lg border border-dark-border/50 flex flex-col gap-1">
+          <div class="flex justify-between">
+            <span class="text-slate-500">起點座標：</span>
+            <span id="statStart" class="font-mono text-slate-300 truncate max-w-[200px]">尚未設定</span>
+          </div>
+          <div class="flex justify-between">
+            <span class="text-slate-500">終點座標：</span>
+            <span id="statEnd" class="font-mono text-slate-300 truncate max-w-[200px]">尚未設定</span>
+          </div>
+        </div>
+      </div>
+
+      <!-- Settings & Options Card -->
+      <div class="bg-dark-card border border-dark-border rounded-2xl p-4 sm:p-5 shadow-xl flex flex-col gap-4">
+        <h3 class="text-xs font-semibold text-slate-400 uppercase tracking-wider flex items-center gap-1.5">
+          <i data-lucide="sliders" class="w-3.5 h-3.5 text-brand-400"></i>
+          GPX 參數設定
+        </h3>
+
+        <!-- Route Name -->
+        <div>
+          <label for="routeName" class="block text-xs font-medium text-slate-300 mb-1.5">路線名稱 (檔案名稱)</label>
+          <div class="relative">
+            <input type="text" id="routeName" value="我的路線" placeholder="例如：合歡北峰、週末單車"
+              class="w-full bg-dark-input border border-dark-border rounded-xl px-3.5 py-2 text-sm text-slate-200 focus:outline-none focus:ring-2 focus:ring-brand-500/50 focus:border-brand-500 transition">
+          </div>
+        </div>
+
+        <!-- Mode Selector -->
+        <div>
+          <label class="block text-xs font-medium text-slate-300 mb-1.5">GPX 輸出類型</label>
+          <div class="grid grid-cols-2 gap-2 bg-dark-input p-1 rounded-xl border border-dark-border">
+            <button id="typeTrk" class="py-2 text-xs font-semibold rounded-lg transition flex items-center justify-center gap-1.5 bg-brand-600 text-white shadow">
+              <i data-lucide="route" class="w-3.5 h-3.5"></i>
+              連續軌跡 (Track)
+            </button>
+            <button id="typeWpt" class="py-2 text-xs font-semibold rounded-lg transition flex items-center justify-center gap-1.5 text-slate-400 hover:text-white">
+              <i data-lucide="map-pin" class="w-3.5 h-3.5"></i>
+              地標清單 (Waypoints)
+            </button>
+          </div>
+        </div>
+
+        <!-- Speed & Timestamp Mode -->
+        <div>
+          <label for="speedMode" class="block text-xs font-medium text-slate-300 mb-1.5">時間戳記 & 運動配速</label>
+          <select id="speedMode" class="w-full bg-dark-input border border-dark-border rounded-xl px-3.5 py-2 text-sm text-slate-200 focus:outline-none focus:ring-2 focus:ring-brand-500/50">
+            <option value="walk_5">步行 / 登山 (時速約 5 km/h)</option>
+            <option value="run_10">跑步 (時速約 10 km/h)</option>
+            <option value="bike_20">自行車 (時速約 20 km/h)</option>
+            <option value="car_60">開車 / 快速 (時速約 60 km/h)</option>
+            <option value="fixed_10s">每點固定間隔 10 秒</option>
+            <option value="none">不附加時間 (純路線導航用)</option>
+          </select>
+        </div>
+      </div>
+
+      <!-- Main Action Buttons (Download & Share) -->
+      <div class="grid grid-cols-1 sm:grid-cols-2 gap-2.5 pt-1">
+        <!-- Download Button -->
+        <button id="btnDownload" class="w-full bg-gradient-to-r from-brand-600 to-indigo-600 hover:from-brand-500 hover:to-indigo-500 text-white font-bold py-3.5 px-4 rounded-xl shadow-lg shadow-brand-600/30 flex items-center justify-center gap-2 transition active-scale">
+          <i data-lucide="download" class="w-5 h-5"></i>
+          <span>下載 .GPX 檔案</span>
+        </button>
+
+        <!-- Share / Send Button (Great for iOS/Android) -->
+        <button id="btnShare" class="w-full bg-dark-input hover:bg-dark-hover border border-dark-border hover:border-brand-500/50 text-slate-200 font-semibold py-3.5 px-4 rounded-xl flex items-center justify-center gap-2 transition active-scale">
+          <i data-lucide="share-2" class="w-5 h-5 text-indigo-400"></i>
+          <span>分享 / 傳送檔案</span>
+        </button>
+      </div>
+
+      <!-- Secondary Utility Button: Copy XML -->
+      <button id="btnCopyXML" class="w-full py-2.5 text-xs text-slate-400 hover:text-slate-200 bg-dark-card/50 hover:bg-dark-card border border-dark-border rounded-xl flex items-center justify-center gap-1.5 transition">
+        <i data-lucide="code" class="w-4 h-4"></i>
+        <span>複製 GPX XML 代碼至剪貼簿</span>
+      </button>
+
+    </div>
+
+    <!-- Right Column: Interactive Map Preview (7 cols on large screens) -->
+    <div class="lg:col-span-7 flex flex-col gap-3">
+      <div class="bg-dark-card border border-dark-border rounded-2xl p-4 shadow-xl flex-1 flex flex-col min-h-[380px] lg:min-h-[580px]">
+        
+        <div class="flex items-center justify-between mb-3">
+          <div class="flex items-center gap-2">
+            <i data-lucide="map" class="w-4 h-4 text-brand-400"></i>
+            <h2 class="text-sm font-semibold text-slate-200">地圖即時預覽</h2>
+          </div>
+          
+          <div class="flex items-center gap-2">
+            <span class="inline-flex items-center gap-1 text-[11px] text-emerald-400 bg-emerald-500/10 border border-emerald-500/20 px-2 py-0.5 rounded-full">
+              <span class="w-1.5 h-1.5 rounded-full bg-emerald-400 animate-pulse"></span>
+              即時同步
+            </span>
+            <button id="btnFitMap" title="自動縮放至全景" class="text-xs bg-dark-input hover:bg-dark-hover border border-dark-border p-1.5 rounded-lg text-slate-300 transition active-scale">
+              <i data-lucide="maximize-2" class="w-4 h-4"></i>
+            </button>
+          </div>
+        </div>
+
+        <!-- Leaflet Map Container -->
+        <div id="map" class="flex-1 w-full rounded-xl border border-dark-border overflow-hidden z-0"></div>
+
+        <!-- Map Footer Legend -->
+        <div class="mt-3 flex items-center justify-between text-[11px] text-slate-400 px-1">
+          <div class="flex items-center gap-3">
+            <span class="flex items-center gap-1">
+              <span class="w-2.5 h-2.5 rounded-full bg-emerald-500"></span> 起點
+            </span>
+            <span class="flex items-center gap-1">
+              <span class="w-2.5 h-2.5 rounded-full bg-red-500"></span> 終點
+            </span>
+            <span class="flex items-center gap-1">
+              <span class="w-3.5 h-1 rounded bg-indigo-500"></span> 軌跡路徑
+            </span>
+          </div>
+          <span class="text-slate-500">© OpenStreetMap 貢獻者</span>
+        </div>
+      </div>
+    </div>
+
+  </main>
+
+  <!-- Notification Toast -->
+  <div id="toast" class="fixed bottom-5 left-1/2 -translate-x-1/2 z-50 bg-slate-800 text-white border border-slate-700 px-4 py-3 rounded-xl shadow-2xl flex items-center gap-2.5 text-xs sm:text-sm font-medium transition-all duration-300 opacity-0 pointer-events-none translate-y-3">
+    <i id="toastIcon" data-lucide="check-circle" class="w-4 h-4 text-emerald-400"></i>
+    <span id="toastMsg">訊息通知</span>
+  </div>
+
+<script>
+  // Initial Sample Coordinates (Le Mans circuit coordinates)
+  const SAMPLE_COORDS = `47.997699, 0.198029
+47.997589, 0.199023
+47.997305, 0.200037
+47.997233, 0.201194
+47.998614, 0.200226
+47.999667, 0.200370
+47.999959, 0.199168
+48.001267, 0.197840
+48.000088, 0.196423
+47.999551, 0.196546
+47.999274, 0.198367
+47.998801, 0.198730`;
+
+  // Application State
+  let currentExportType = 'trk'; // 'trk' | 'wpt'
+  let parsedPoints = [];
+  let map, polylineLayer, markersLayer;
+
+  // Initialize Lucide Icons
+  lucide.createIcons();
+
+  // Initialize Leaflet Map
+  function initMap() {
+    map = L.map('map', {
+      zoomControl: true,
+      attributionControl: false
+    }).setView([23.973875, 120.982024], 7); // Default centered in Taiwan
+
+    // Add Dark Mode OSM Tiles
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+      maxZoom: 19,
+      className: 'dark-map-tiles'
+    }).addTo(map);
+
+    polylineLayer = L.polyline([], {
+      color: '#6366f1',
+      weight: 4,
+      opacity: 0.9,
+      lineJoin: 'round'
+    }).addTo(map);
+
+    markersLayer = L.layerGroup().addTo(map);
+  }
+
+  // Calculate distance between two lat/lon using Haversine formula (km)
+  function calculateDistance(lat1, lon1, lat2, lon2) {
+    const R = 6371; // Earth radius in km
+    const dLat = (lat2 - lat1) * Math.PI / 180;
+    const dLon = (lon2 - lon1) * Math.PI / 180;
+    const a = 
+      Math.sin(dLat/2) * Math.sin(dLat/2) +
+      Math.cos(lat1 * Math.PI / 180) * Math.cos(lat2 * Math.PI / 180) * 
+      Math.sin(dLon/2) * Math.sin(dLon/2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    return R * c;
+  }
+
+  // Parse Raw Coordinate Text
+  function parseCoordinateText(text) {
+    if (!text || !text.trim()) return [];
+    const lines = text.trim().split(/\r?\n/);
+    const points = [];
+
+    for (let line of lines) {
+      const clean = line.trim().replace(/[\(\)\[\]]/g, '');
+      if (!clean) continue;
+
+      // Match Google Maps URL pattern if any
+      const gmapMatch = clean.match(/@(-?\d+\.\d+),(-?\d+\.\d+)/);
+      if (gmapMatch) {
+        points.push({ lat: parseFloat(gmapMatch[1]), lon: parseFloat(gmapMatch[2]) });
+        continue;
+      }
+
+      // Split by comma, tab, or space
+      const parts = clean.split(/[,;\s\t]+/).filter(Boolean);
+      if (parts.length >= 2) {
+        const lat = parseFloat(parts[0]);
+        const lon = parseFloat(parts[1]);
+        const ele = parts[2] !== undefined ? parseFloat(parts[2]) : undefined;
+
+        if (!isNaN(lat) && !isNaN(lon) && Math.abs(lat) <= 90 && Math.abs(lon) <= 180) {
+          points.push({
+            lat: lat,
+            lon: lon,
+            ele: !isNaN(ele) ? ele : undefined
+          });
+        }
+      }
+    }
+    return points;
+  }
+
+  // Update Map Graphics & Markers
+  function updateMap(points) {
+    if (!map) return;
+    markersLayer.clearLayers();
+
+    if (points.length === 0) {
+      polylineLayer.setLatLngs([]);
+      return;
+    }
+
+    const latlngs = points.map(p => [p.lat, p.lon]);
+    polylineLayer.setLatLngs(latlngs);
+
+    // Custom Icon Generator
+    const createMarkerIcon = (color, label) => L.divIcon({
+      className: 'custom-div-icon',
+      html: `<div class="w-6 h-6 rounded-full ${color} border-2 border-white shadow-lg flex items-center justify-center text-[10px] font-bold text-white">${label}</div>`,
+      iconSize: [24, 24],
+      iconAnchor: [12, 12]
+    });
+
+    // Start Marker
+    L.marker(latlngs[0], { icon: createMarkerIcon('bg-emerald-500', '起') })
+      .bindPopup(`<b>起點</b><br>${points[0].lat.toFixed(6)}, ${points[0].lon.toFixed(6)}`)
+      .addTo(markersLayer);
+
+    // End Marker (if > 1 point)
+    if (points.length > 1) {
+      L.marker(latlngs[latlngs.length - 1], { icon: createMarkerIcon('bg-red-500', '終') })
+        .bindPopup(`<b>終點</b><br>${points[points.length - 1].lat.toFixed(6)}, ${points[points.length - 1].lon.toFixed(6)}`)
+        .addTo(markersLayer);
+    }
+
+    // Waypoint Mode: Add small dots for intermediate points
+    if (currentExportType === 'wpt' && points.length > 2) {
+      for (let i = 1; i < points.length - 1; i++) {
+        L.circleMarker(latlngs[i], {
+          radius: 4,
+          color: '#818cf8',
+          fillColor: '#4f46e5',
+          fillOpacity: 0.9,
+          weight: 1.5
+        }).addTo(markersLayer);
+      }
+    }
+
+    // Fit map bounds
+    try {
+      const bounds = L.latLngBounds(latlngs);
+      map.fitBounds(bounds, { padding: [40, 40], maxZoom: 16 });
+    } catch (e) {
+      console.warn("Bounds fit error:", e);
+    }
+  }
+
+  // Update Dashboard Statistics
+  function updateStats(points) {
+    document.getElementById('statPoints').textContent = points.length;
+
+    if (points.length === 0) {
+      document.getElementById('statDistance').textContent = '0.00 km';
+      document.getElementById('statTime').textContent = '--:--';
+      document.getElementById('statStart').textContent = '尚未設定';
+      document.getElementById('statEnd').textContent = '尚未設定';
+      return;
+    }
+
+    // Calculate total distance
+    let totalKm = 0;
+    for (let i = 0; i < points.length - 1; i++) {
+      totalKm += calculateDistance(points[i].lat, points[i].lon, points[i+1].lat, points[i+1].lon);
+    }
+
+    document.getElementById('statDistance').textContent = totalKm < 1 
+      ? `${(totalKm * 1000).toFixed(0)} m` 
+      : `${totalKm.toFixed(2)} km`;
+
+    // Calculate Estimated Time based on Speed Selection
+    const speedSetting = document.getElementById('speedMode').value;
+    let speedKmh = 5;
+    if (speedSetting === 'run_10') speedKmh = 10;
+    else if (speedSetting === 'bike_20') speedKmh = 20;
+    else if (speedSetting === 'car_60') speedKmh = 60;
+    
+    if (speedSetting === 'none') {
+      document.getElementById('statTime').textContent = '無時間';
+    } else if (speedSetting === 'fixed_10s') {
+      const totalSec = points.length * 10;
+      const mins = Math.floor(totalSec / 60);
+      const secs = totalSec % 60;
+      document.getElementById('statTime').textContent = `${mins}分 ${secs}秒`;
+    } else {
+      const totalHours = totalKm / speedKmh;
+      const totalMinutes = Math.round(totalHours * 60);
+      const hrs = Math.floor(totalMinutes / 60);
+      const mins = totalMinutes % 60;
+      document.getElementById('statTime').textContent = hrs > 0 ? `${hrs}小時 ${mins}分` : `${mins} 分鐘`;
+    }
+
+    document.getElementById('statStart').textContent = `${points[0].lat.toFixed(4)}, ${points[0].lon.toFixed(4)}`;
+    document.getElementById('statEnd').textContent = `${points[points.length - 1].lat.toFixed(4)}, ${points[points.length - 1].lon.toFixed(4)}`;
+  }
+
+  // Handle Full Data Refresh
+  function handleDataChange() {
+    const rawText = document.getElementById('coordInput').value;
+    parsedPoints = parseCoordinateText(rawText);
+    updateStats(parsedPoints);
+    updateMap(parsedPoints);
+  }
+
+  // Generate Standard GPX XML String
+  function generateGPXXML() {
+    if (parsedPoints.length === 0) return null;
+    const rawName = document.getElementById('routeName').value.trim() || '我的路線';
+    const name = rawName.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    const speedSetting = document.getElementById('speedMode').value;
+    
+    let startTime = new Date();
+    let currentPointTime = new Date(startTime.getTime());
+
+    // Speed calculation in meters per second
+    let speedKmh = 5;
+    if (speedSetting === 'run_10') speedKmh = 10;
+    else if (speedSetting === 'bike_20') speedKmh = 20;
+    else if (speedSetting === 'car_60') speedKmh = 60;
+    const speedMps = (speedKmh * 1000) / 3600;
+
+    let xml = '<?xml version="1.0" encoding="UTF-8"?>\n';
+    xml += '<gpx version="1.1" creator="GPXGeneratorWebApp" xmlns="http://www.topografix.com/GPX/1/1">\n';
+    xml += '  <metadata>\n';
+    xml += `    <name>${name}</name>\n`;
+    xml += `    <time>${startTime.toISOString()}</time>\n`;
+    xml += '  </metadata>\n';
+
+    if (currentExportType === 'wpt') {
+      parsedPoints.forEach((pt, i) => {
+        xml += `  <wpt lat="${pt.lat}" lon="${pt.lon}">\n`;
+        if (pt.ele !== undefined) xml += `    <ele>${pt.ele}</ele>\n`;
+        xml += `    <name>點位 ${i + 1}</name>\n`;
+        if (speedSetting !== 'none') {
+          xml += `    <time>${currentPointTime.toISOString()}</time>\n`;
+          currentPointTime = new Date(currentPointTime.getTime() + 10000);
+        }
+        xml += '  </wpt>\n';
+      });
+    } else {
+      xml += '  <trk>\n';
+      xml += `    <name>${name}</name>\n`;
+      xml += '    <trkseg>\n';
+      
+      parsedPoints.forEach((pt, i) => {
+        if (i > 0 && speedSetting !== 'none') {
+          if (speedSetting === 'fixed_10s') {
+            currentPointTime = new Date(currentPointTime.getTime() + 10000);
+          } else {
+            const distKm = calculateDistance(parsedPoints[i-1].lat, parsedPoints[i-1].lon, pt.lat, pt.lon);
+            const durationSec = Math.max(1, Math.round((distKm * 1000) / speedMps));
+            currentPointTime = new Date(currentPointTime.getTime() + durationSec * 1000);
+          }
+        }
+
+        xml += `      <trkpt lat="${pt.lat}" lon="${pt.lon}">\n`;
+        if (pt.ele !== undefined) xml += `        <ele>${pt.ele}</ele>\n`;
+        if (speedSetting !== 'none') xml += `        <time>${currentPointTime.toISOString()}</time>\n`;
+        xml += '      </trkpt>\n';
+      });
+
+      xml += '    </trkseg>\n';
+      xml += '  </trk>\n';
+    }
+    xml += '</gpx>';
+    return xml;
+  }
+
+  // Toast Notification
+  function showToast(msg, icon = 'check-circle') {
+    const toast = document.getElementById('toast');
+    const toastMsg = document.getElementById('toastMsg');
+    const toastIcon = document.getElementById('toastIcon');
+
+    toastMsg.textContent = msg;
+    toastIcon.setAttribute('data-lucide', icon);
+    lucide.createIcons();
+
+    toast.classList.remove('opacity-0', 'pointer-events-none', 'translate-y-3');
+    toast.classList.add('opacity-100', 'translate-y-0');
+
+    setTimeout(() => {
+      toast.classList.remove('opacity-100', 'translate-y-0');
+      toast.classList.add('opacity-0', 'pointer-events-none', 'translate-y-3');
+    }, 2800);
+  }
+
+  // Document Ready & Event Bindings
+  window.addEventListener('DOMContentLoaded', () => {
+    initMap();
+
+    const coordInput = document.getElementById('coordInput');
+    const btnLoadSample = document.getElementById('btnLoadSample');
+    const btnClear = document.getElementById('btnClear');
+    const btnSwapCoords = document.getElementById('btnSwapCoords');
+    const btnPaste = document.getElementById('btnPaste');
+    const btnDownload = document.getElementById('btnDownload');
+    const btnShare = document.getElementById('btnShare');
+    const btnCopyXML = document.getElementById('btnCopyXML');
+    const btnFitMap = document.getElementById('btnFitMap');
+    const typeTrk = document.getElementById('typeTrk');
+    const typeWpt = document.getElementById('typeWpt');
+    const speedMode = document.getElementById('speedMode');
+
+    // Real-time Text Input Listener
+    coordInput.addEventListener('input', handleDataChange);
+    speedMode.addEventListener('change', () => updateStats(parsedPoints));
+
+    // Load Sample Button
+    btnLoadSample.addEventListener('click', () => {
+      coordInput.value = SAMPLE_COORDS;
+      document.getElementById('routeName').value = '利曼賽道經典範例';
+      handleDataChange();
+      showToast('已成功載入範例座標！', 'sparkles');
+    });
+
+    // Clear Button
+    btnClear.addEventListener('click', () => {
+      coordInput.value = '';
+      handleDataChange();
+      showToast('已清空所有座標。', 'trash-2');
+    });
+
+    // Swap Lat / Lon (經緯度對調)
+    btnSwapCoords.addEventListener('click', () => {
+      if (parsedPoints.length === 0) {
+        showToast('請先輸入座標才能進行對調。', 'alert-circle');
+        return;
+      }
+      const swappedLines = parsedPoints.map(p => {
+        return p.ele !== undefined ? `${p.lon}, ${p.lat}, ${p.ele}` : `${p.lon}, ${p.lat}`;
+      });
+      coordInput.value = swappedLines.join('\n');
+      handleDataChange();
+      showToast('經緯度已全部對調！', 'arrow-left-right');
+    });
+
+    // Paste from Clipboard
+    btnPaste.addEventListener('click', async () => {
+      try {
+        if (navigator.clipboard && navigator.clipboard.readText) {
+          const text = await navigator.clipboard.readText();
+          if (text) {
+            coordInput.value = text;
+            handleDataChange();
+            showToast('已貼上剪貼簿內容！', 'clipboard');
+            return;
+          }
+        }
+        // Fallback for restrictions
+        coordInput.focus();
+        showToast('請直接在文字框中長按貼上。', 'info');
+      } catch (err) {
+        coordInput.focus();
+        showToast('瀏覽器權限限制，請手動貼上。', 'info');
+      }
+    });
+
+    // Toggle Mode: Track vs Waypoints
+    typeTrk.addEventListener('click', () => {
+      currentExportType = 'trk';
+      typeTrk.className = 'py-2 text-xs font-semibold rounded-lg transition flex items-center justify-center gap-1.5 bg-brand-600 text-white shadow';
+      typeWpt.className = 'py-2 text-xs font-semibold rounded-lg transition flex items-center justify-center gap-1.5 text-slate-400 hover:text-white';
+      updateMap(parsedPoints);
+    });
+
+    typeWpt.addEventListener('click', () => {
+      currentExportType = 'wpt';
+      typeWpt.className = 'py-2 text-xs font-semibold rounded-lg transition flex items-center justify-center gap-1.5 bg-brand-600 text-white shadow';
+      typeTrk.className = 'py-2 text-xs font-semibold rounded-lg transition flex items-center justify-center gap-1.5 text-slate-400 hover:text-white';
+      updateMap(parsedPoints);
+    });
+
+    // Download GPX File
+    btnDownload.addEventListener('click', () => {
+      const xml = generateGPXXML();
+      if (!xml) {
+        showToast('請先輸入至少一組有效座標！', 'alert-circle');
+        return;
+      }
+      const rawName = document.getElementById('routeName').value.trim() || 'route';
+      const cleanFileName = rawName.replace(/[^a-zA-Z0-9_\u4e00-\u9fa5-]/g, '_');
+      
+      const blob = new Blob([xml], { type: 'application/gpx+xml;charset=utf-8;' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = `${cleanFileName}.gpx`;
+      document.body.appendChild(a);
+      a.click();
+      document.body.removeChild(a);
+      URL.revokeObjectURL(url);
+
+      showToast(`已成功下載 ${cleanFileName}.gpx`, 'download');
+    });
+
+    // Web Share API (Directly send to Garmin / LINE / Hikingbook on Mobile)
+    btnShare.addEventListener('click', async () => {
+      const xml = generateGPXXML();
+      if (!xml) {
+        showToast('請先輸入座標才能分享！', 'alert-circle');
+        return;
+      }
+      const rawName = document.getElementById('routeName').value.trim() || 'route';
+      const cleanFileName = rawName.replace(/[^a-zA-Z0-9_\u4e00-\u9fa5-]/g, '_');
+      const blob = new Blob([xml], { type: 'application/gpx+xml;charset=utf-8;' });
+      const file = new File([blob], `${cleanFileName}.gpx`, { type: 'application/gpx+xml' });
+
+      if (navigator.canShare && navigator.canShare({ files: [file] })) {
+        try {
+          await navigator.share({
+            files: [file],
+            title: `${rawName}.gpx`,
+            text: `這是為您生成的 GPX 軌跡檔：${rawName}`
+          });
+          showToast('分享成功！', 'share-2');
+        } catch (err) {
+          if (err.name !== 'AbortError') {
+            showToast('分享取消或失敗。', 'alert-circle');
+          }
+        }
+      } else {
+        // Fallback: Download file directly
+        btnDownload.click();
+        showToast('此瀏覽器未支援直接傳送檔案，已自動為您下載！', 'download');
+      }
+    });
+
+    // Copy XML to Clipboard
+    btnCopyXML.addEventListener('click', () => {
+      const xml = generateGPXXML();
+      if (!xml) {
+        showToast('請先輸入有效座標！', 'alert-circle');
+        return;
+      }
+
+      // Fallback copy strategy
+      const tempArea = document.createElement('textarea');
+      tempArea.value = xml;
+      document.body.appendChild(tempArea);
+      tempArea.select();
+      try {
+        document.execCommand('copy');
+        showToast('GPX 原始碼已複製至剪貼簿！', 'code');
+      } catch (err) {
+        showToast('複製失敗，請手動複製。', 'alert-circle');
+      }
+      document.body.removeChild(tempArea);
+    });
+
+    // Fit Map Viewport
+    btnFitMap.addEventListener('click', () => {
+      if (parsedPoints.length > 0) {
+        const latlngs = parsedPoints.map(p => [p.lat, p.lon]);
+        map.fitBounds(L.latLngBounds(latlngs), { padding: [40, 40] });
+        showToast('已重新對焦至路線全景。', 'maximize-2');
+      }
+    });
+
+    // Load initial sample
+    btnLoadSample.click();
+  });
+</script>
+</body>
+</html>
